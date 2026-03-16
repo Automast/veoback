@@ -247,44 +247,34 @@ function buildHTML() {
   p('</div>');
 
   // Form card
-  p('<div class="card">');
+  p('  <div class="card">');
   p('  <div class="section-title">New Generation</div>');
   p('  <div class="field">');
   p('    <label>Prompt *</label>');
-  p('    <textarea id="prompt" placeholder="A cinematic drone shot over a misty forest at dawn, golden light breaking through the canopy, orchestral score swelling..."></textarea>');
-  p('    <p class="hint">Prefix with <strong style="color:var(--amber2)">(15s,hd)</strong> for 15-second HD video.</p>');
+  p('    <textarea id="prompt" placeholder="A golden retriever running through a sunlit meadow, slow motion, cinematic, warm tones, gentle ambient music..."></textarea>');
   p('  </div>');
   p('  <div class="row3 field">');
+  p('    <div><label>Model</label>');
+  p('      <select id="model">');
+  p('        <option value="sora-2">sora-2 (Standard)</option>');
+  p('        <option value="sora-2-pro">sora-2-pro (HD)</option>');
+  p('      </select></div>');
   p('    <div><label>Duration</label>');
   p('      <select id="duration">');
-  p('        <option value="10">10s — $0.175</option>');
-  p('        <option value="15">15s — $0.200</option>');
+  p('        <option value="10">10 seconds — $0.175</option>');
+  p('        <option value="15">15 seconds — $0.200</option>');
+  p('        <option value="25">25 seconds — pro only</option>');
   p('      </select></div>');
   p('    <div><label>Aspect Ratio</label>');
-  p('      <select id="aspect">');
-  p('        <option value="16:9">16:9 Landscape</option>');
-  p('        <option value="9:16">9:16 Portrait</option>');
-  p('        <option value="1:1">1:1 Square</option>');
-  p('      </select></div>');
-  p('    <div><label>Quality</label>');
-  p('      <select id="quality">');
-  p('        <option value="">Standard</option>');
-  p('        <option value="hd">HD</option>');
+  p('      <select id="aspect_ratio">');
+  p('        <option value="16:9">16:9 — Landscape</option>');
+  p('        <option value="9:16">9:16 — Portrait</option>');
   p('      </select></div>');
   p('  </div>');
   p('  <div class="field">');
-  p('    <label>Reference Image <span style="color:var(--muted)">(optional)</span></label>');
-  p('    <div class="dropzone" id="dropzone">');
-  p('      <input type="file" id="ref-image" accept=".jpg,.jpeg,.png,.webp" onchange="previewImg(this)"/>');
-  p('      <div class="dz-icon">&#127902;</div>');
-  p('      <div class="dz-lbl">Drop image or click to browse</div>');
-  p('      <div class="dz-prev" id="dz-prev"></div>');
-  p('    </div>');
-  p('    <p class="hint">No real human faces — rejected by content moderation.</p>');
-  p('  </div>');
-  p('  <div class="field">');
-  p('    <label>Negative Prompt <span style="color:var(--muted)">(optional)</span></label>');
-  p('    <input type="text" id="neg" placeholder="blurry, watermark, text overlay..."/>');
+  p('    <label>Reference Image URL <span style="color:var(--muted)">(optional — must be a public URL)</span></label>');
+  p('    <input type="text" id="ref-image-url" placeholder="https://example.com/your-image.jpg"/>');
+  p('    <p class="hint">API only accepts public image URLs (.jpg .png .webp). No real human faces.</p>');
   p('  </div>');
   p('  <button class="btn-gen" id="btn-gen" onclick="generate()"><span class="shimmer"></span><span id="btn-lbl">GENERATE VIDEO</span></button>');
   p('</div>');
@@ -356,7 +346,6 @@ function buildHTML() {
   p('function init() {');
   p('  fetchBalance();');
   p('  loadHistory();');
-  p('  setupDragDrop();');
   p('}');
 
   // Balance
@@ -418,6 +407,9 @@ function buildHTML() {
   p('    html += \'      <button class="btn-sm blue" onclick="recheckTask(\\"\' + item.taskId + \'\\",\\"\' + item.id + \'\\")">Recheck</button>\';');
   p('    html += \'    </div>\';');
   p('    html += \'  </div>\';');
+  p('    if (item.status === "failed" && item.reason) {');
+  p('      html += \'  <div style="font-family:var(--mono);font-size:10px;color:var(--red);margin-top:4px;opacity:.8">\' + escHtml(item.reason) + \'</div>\';');
+  p('    }');
   p('    if (item.taskId) html += \'  <div class="hist-task">ID: \' + item.taskId + \'</div>\';');
   p('    if (item.status === "success" && item.videoUrl) {');
   p('      html += \'  <div class="hist-preview" id="prev-\' + item.id + \'">\';');
@@ -448,15 +440,16 @@ function buildHTML() {
   p('          headers: { "Content-Type": "application/json" },');
   p('          body: JSON.stringify({ taskId: taskId, status: "success", videoUrl: url })');
   p('        }).then(function(){ loadHistory(); });');
-  p('        if (url) { toast("Success! Video ready.", true); showResult(url); }');
-  p('        else toast("Completed but no video URL yet");');
+  p('        if (url && url !== "") { toast("Success! Video ready.", true); showResult(url); }');
+  p('        else toast("Completed but video URL is empty — likely removed by moderation");');
   p('      } else if (status === "failed" || status === "error") {');
+  p('        var why = data.reason || "Content moderation rejection";');
   p('        fetch("/api/history/update", {');
   p('          method: "POST",');
   p('          headers: { "Content-Type": "application/json" },');
-  p('          body: JSON.stringify({ taskId: taskId, status: "failed" })');
+  p('          body: JSON.stringify({ taskId: taskId, status: "failed", reason: why })');
   p('        }).then(function(){ loadHistory(); });');
-  p('        toast("Task is still failed on Defapi");');
+  p('        toast("Still failed: " + why);');
   p('      } else {');
   p('        toast("Status: " + (status || "pending") + " — still processing", true);');
   p('        if (status === "pending" || !status) startPolling(taskId);');
@@ -465,27 +458,7 @@ function buildHTML() {
   p('    .catch(function(e){ toast("Recheck error: " + e.message); });');
   p('}');
 
-  // Drag drop setup
-  p('function setupDragDrop() {');
-  p('  var dz = document.getElementById("dropzone");');
-  p('  dz.addEventListener("dragover",  function(e){ e.preventDefault(); dz.classList.add("drag"); });');
-  p('  dz.addEventListener("dragleave", function(){ dz.classList.remove("drag"); });');
-  p('  dz.addEventListener("drop", function(e){');
-  p('    e.preventDefault(); dz.classList.remove("drag");');
-  p('    var f = e.dataTransfer.files[0];');
-  p('    if (f) { document.getElementById("ref-image").files = e.dataTransfer.files; previewImg(document.getElementById("ref-image")); }');
-  p('  });');
-  p('}');
-
   // Helpers
-  p('function previewImg(input) {');
-  p('  if (input.files && input.files[0]) {');
-  p('    var r = new FileReader();');
-  p('    r.onload = function(e){ document.getElementById("dz-prev").innerHTML = "<img src=" + e.target.result + " alt=preview/>"; };');
-  p('    r.readAsDataURL(input.files[0]);');
-  p('  }');
-  p('}');
-
   p('function toggleTips(){ document.getElementById("tips-hdr").classList.toggle("open"); document.getElementById("tips-body").classList.toggle("open"); }');
   p('function loadPrompt(el){ document.getElementById("prompt").value = el.textContent.trim(); }');
 
@@ -500,36 +473,22 @@ function buildHTML() {
   p('  return Math.floor(sec/86400) + "d ago";');
   p('}');
 
-  p('function fileToBase64(file){ return new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){res(r.result);}; r.onerror=rej; r.readAsDataURL(file); }); }');
-
-  p('function buildPrompt(){');
-  p('  var raw=document.getElementById("prompt").value.trim();');
-  p('  var dur=document.getElementById("duration").value;');
-  p('  var q=document.getElementById("quality").value;');
-  p('  var pre="";');
-  p('  if(dur==="15"&&q==="hd"&&raw.indexOf("(15s,hd)")!==0) pre="(15s,hd) ";');
-  p('  else if(dur==="15"&&raw.indexOf("(15s")!==0) pre="(15s) ";');
-  p('  else if(q==="hd"&&raw.indexOf("(hd)")!==0&&raw.indexOf("(15s,hd)")!==0) pre="(hd) ";');
-  p('  return pre + raw;');
-  p('}');
-
   // Generate
   p('var pollTimer = null;');
   p('async function generate() {');
-  p('  var prompt = buildPrompt();');
+  p('  var prompt = document.getElementById("prompt").value.trim();');
   p('  if (!prompt) { toast("Please enter a prompt."); return; }');
-  p('  var imgInput = document.getElementById("ref-image");');
-  p('  var imgB64 = null;');
-  p('  if (imgInput.files && imgInput.files[0]) imgB64 = await fileToBase64(imgInput.files[0]);');
+  p('  var model       = document.getElementById("model").value;');
+  p('  var duration    = document.getElementById("duration").value;');
+  p('  var aspect_ratio= document.getElementById("aspect_ratio").value;');
+  p('  var imgUrl      = document.getElementById("ref-image-url").value.trim();');
   p('  var btn = document.getElementById("btn-gen");');
   p('  btn.disabled = true;');
   p('  document.getElementById("btn-lbl").textContent = "SUBMITTING...";');
   p('  document.getElementById("result-panel").style.display = "none";');
   p('  setStatus("Submitting to Defapi...", "pending");');
-  p('  var body = { prompt: prompt, images: [] };');
-  p('  if (imgB64) body.images = [imgB64];');
-  p('  var neg = document.getElementById("neg").value.trim();');
-  p('  if (neg) body.negative_prompt = neg;');
+  p('  var body = { prompt: prompt, model: model, duration: duration, aspect_ratio: aspect_ratio };');
+  p('  if (imgUrl) body.images = [imgUrl];');
   p('  try {');
   p('    var res  = await fetch("/api/generate", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({body:body}) });');
   p('    var data = await res.json();');
@@ -559,11 +518,17 @@ function buildHTML() {
   p('        var s = (data.status||"").toLowerCase();');
   p('        if (s==="success"||s==="completed"||s==="succeeded") {');
   p('          var url=(data.result&&(data.result.video||data.result.url))||data.video_url||null;');
-  p('          if (url) { setStatus("Done!","success",taskId); showResult(url); toast("Video ready!",true); }');
-  p('          else setStatus("Complete but no video URL.","error");');
+  p('          if (url && url !== "") { setStatus("Done!","success",taskId); showResult(url); toast("Video ready!",true); }');
+  p('          else setStatus("Defapi returned success but video URL is empty — content moderation may have removed it.","error");');
   p('          resetBtn(); loadHistory(); fetchBalance(); return;');
   p('        }');
-  p('        if (s==="failed"||s==="error") { setStatus("Generation failed — try simplifying your prompt.","error"); resetBtn(); loadHistory(); return; }');
+  p('        if (s==="failed"||s==="error") {');
+  p('          var why = data.reason ? data.reason : "Defapi rejected the prompt (content moderation). Try rewording it — avoid brand names, celebrities, violence.";');
+  p('          var cost = data.consumed && data.consumed !== "0.00000000" ? " | Cost: $"+data.consumed : " | Not charged";');
+  p('          setStatus("Generation failed: " + why + cost, "error");');
+  p('          toast("Failed: " + why);');
+  p('          resetBtn(); loadHistory(); return;');
+  p('        }');
   p('        var pct=data.progress||0;');
   p('        if(pct>0){var f=document.getElementById("prog-fill");f.classList.remove("indet");f.style.width=pct+"%";}');
   p('        setStatus(pct>0?"Generating... "+pct+"% complete":"Generating video...","pending",taskId);');
@@ -659,15 +624,19 @@ app.post("/api/generate", async (req, res) => {
     const { body } = req.body;
     if (!body || !body.prompt) return res.status(400).json({ error: "prompt is required" });
 
-    // Always include images array (Defapi expects it even when empty)
+    // Build clean payload exactly per Defapi spec
     const defapiPayload = {
-      prompt: body.prompt,
-      images: Array.isArray(body.images) ? body.images : [],
+      model:        body.model        || "sora-2",
+      prompt:       body.prompt,
+      duration:     String(body.duration || "10"),
+      aspect_ratio: body.aspect_ratio || "16:9",
     };
-    // Pass negative_prompt only if Defapi supports it (won't break if it doesn't)
-    if (body.negative_prompt) defapiPayload.negative_prompt = body.negative_prompt;
+    // images: only include if a URL was provided — never send empty array
+    if (Array.isArray(body.images) && body.images.length > 0 && body.images[0]) {
+      defapiPayload.images = [body.images[0]];
+    }
 
-    console.log("[generate] Sending to Defapi:", JSON.stringify({ prompt: defapiPayload.prompt, images_count: defapiPayload.images.length }));
+    console.log("[generate] Payload to Defapi:", JSON.stringify(defapiPayload));
 
     const upstream = await fetch("https://api.defapi.org/api/sora2/gen", {
       method: "POST",
@@ -732,20 +701,22 @@ app.get("/api/status/:taskId", async (req, res) => {
     if (!upstream.ok)
       return res.status(upstream.status).json({ error: data.message || data.error || "Status error", raw: rawText });
 
-    const inner    = data.data || data;
-    const status   = inner.status   || data.status   || "pending";
-    const progress = inner.progress || data.progress || 0;
-    const result   = inner.result   || data.result   || null;
-    const videoUrl = (result && (result.video || result.url)) || inner.video_url || null;
+    const inner      = data.data || data;
+    const status     = inner.status   || data.status   || "pending";
+    const progress   = inner.progress || data.progress || 0;
+    const result     = inner.result   || data.result   || null;
+    const videoUrl   = (result && (result.video || result.url)) || inner.video_url || null;
+    const reason     = (inner.status_reason && inner.status_reason.message) || null;
+    const consumed   = inner.consumed || null;
 
     const statusLower = (status || "").toLowerCase();
     if (statusLower === "success" || statusLower === "completed" || statusLower === "succeeded") {
       updateHistory(taskId, { status: "success", videoUrl });
     } else if (statusLower === "failed" || statusLower === "error") {
-      updateHistory(taskId, { status: "failed" });
+      updateHistory(taskId, { status: "failed", reason });
     }
 
-    res.json({ status, progress, result, video_url: videoUrl, _raw: data });
+    res.json({ status, progress, result, video_url: videoUrl, reason, consumed, _raw: data });
 
   } catch (err) {
     console.error("[/api/status] exception:", err);
