@@ -506,12 +506,11 @@ function buildHTML() {
   p('  var raw=document.getElementById("prompt").value.trim();');
   p('  var dur=document.getElementById("duration").value;');
   p('  var q=document.getElementById("quality").value;');
-  p('  var neg=document.getElementById("neg").value.trim();');
   p('  var pre="";');
   p('  if(dur==="15"&&q==="hd"&&raw.indexOf("(15s,hd)")!==0) pre="(15s,hd) ";');
   p('  else if(dur==="15"&&raw.indexOf("(15s")!==0) pre="(15s) ";');
   p('  else if(q==="hd"&&raw.indexOf("(hd)")!==0&&raw.indexOf("(15s,hd)")!==0) pre="(hd) ";');
-  p('  return pre + raw + (neg ? " [avoid: "+neg+"]" : "");');
+  p('  return pre + raw;');
   p('}');
 
   // Generate
@@ -527,12 +526,20 @@ function buildHTML() {
   p('  document.getElementById("btn-lbl").textContent = "SUBMITTING...";');
   p('  document.getElementById("result-panel").style.display = "none";');
   p('  setStatus("Submitting to Defapi...", "pending");');
-  p('  var body = { prompt: prompt };');
+  p('  var body = { prompt: prompt, images: [] };');
   p('  if (imgB64) body.images = [imgB64];');
+  p('  var neg = document.getElementById("neg").value.trim();');
+  p('  if (neg) body.negative_prompt = neg;');
   p('  try {');
   p('    var res  = await fetch("/api/generate", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({body:body}) });');
   p('    var data = await res.json();');
-  p('    if (!res.ok || data.error) { setStatus("Submission failed: "+(data.error||res.status),"error"); toast("Submission failed: "+(data.error||"check server logs")); resetBtn(); return; }');
+  p('    if (!res.ok || data.error) {');
+  p('      var errMsg = data.error || ("HTTP " + res.status);');
+  p('      var detail = data.details ? JSON.stringify(data.details) : (data.raw || "");');
+  p('      setStatus("Submission failed: " + errMsg, "error");');
+  p('      toast("Defapi error: " + errMsg + (detail ? " | " + detail.substring(0,120) : ""));');
+  p('      resetBtn(); return;');
+  p('    }');
   p('    setStatus("Queued — polling for result...", "pending", data.task_id);');
   p('    startPolling(data.task_id);');
   p('    loadHistory();');
@@ -652,29 +659,44 @@ app.post("/api/generate", async (req, res) => {
     const { body } = req.body;
     if (!body || !body.prompt) return res.status(400).json({ error: "prompt is required" });
 
+    // Always include images array (Defapi expects it even when empty)
+    const defapiPayload = {
+      prompt: body.prompt,
+      images: Array.isArray(body.images) ? body.images : [],
+    };
+    // Pass negative_prompt only if Defapi supports it (won't break if it doesn't)
+    if (body.negative_prompt) defapiPayload.negative_prompt = body.negative_prompt;
+
+    console.log("[generate] Sending to Defapi:", JSON.stringify({ prompt: defapiPayload.prompt, images_count: defapiPayload.images.length }));
+
     const upstream = await fetch("https://api.defapi.org/api/sora2/gen", {
       method: "POST",
       headers: { "Authorization": `Bearer ${DEFAPI_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(defapiPayload),
     });
-    const data = await upstream.json();
+
+    const rawText = await upstream.text();
+    console.log("[generate] Defapi HTTP status:", upstream.status);
+    console.log("[generate] Defapi raw response:", rawText);
+
+    let data = {};
+    try { data = JSON.parse(rawText); } catch (_) {
+      return res.status(502).json({ error: "Defapi returned non-JSON", raw: rawText });
+    }
 
     if (!upstream.ok)
-      return res.status(upstream.status).json({ error: data.message || data.error || "Defapi error", details: data });
+      return res.status(upstream.status).json({ error: data.message || data.error || "Defapi error", details: data, raw: rawText });
+
     if (data.code !== undefined && data.code !== 0)
-      return res.status(400).json({ error: data.message || "Non-zero code", details: data });
+      return res.status(400).json({ error: data.message || "Defapi non-zero code: " + data.code, details: data });
 
     const taskId = (data.data && (data.data.task_id || data.data.id)) || data.task_id || null;
-    if (!taskId) return res.status(500).json({ error: "No task_id in response", raw: data });
+    if (!taskId) return res.status(500).json({ error: "No task_id returned — Defapi response was: " + rawText });
 
-    // Save to history
     const entry = {
       id:        crypto.randomUUID(),
       taskId,
-      prompt:    body.prompt,
-      aspect:    body.aspect    || "16:9",
-      duration:  body.duration  || "10",
-      quality:   body.quality   || "standard",
+      prompt:    defapiPayload.prompt,
       status:    "pending",
       videoUrl:  null,
       createdAt: new Date().toISOString(),
@@ -685,7 +707,7 @@ app.post("/api/generate", async (req, res) => {
     res.json({ task_id: taskId });
 
   } catch (err) {
-    console.error("[/api/generate]", err);
+    console.error("[/api/generate] exception:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -698,9 +720,17 @@ app.get("/api/status/:taskId", async (req, res) => {
       `https://api.defapi.org/api/task/query?task_id=${encodeURIComponent(taskId)}`,
       { method: "GET", headers: { "Authorization": `Bearer ${DEFAPI_KEY}` } }
     );
-    const data = await upstream.json();
+
+    const rawText = await upstream.text();
+    console.log("[status] taskId:", taskId, "| HTTP:", upstream.status, "| raw:", rawText);
+
+    let data = {};
+    try { data = JSON.parse(rawText); } catch (_) {
+      return res.status(502).json({ error: "Defapi returned non-JSON", raw: rawText });
+    }
+
     if (!upstream.ok)
-      return res.status(upstream.status).json({ error: data.message || data.error || "Status error" });
+      return res.status(upstream.status).json({ error: data.message || data.error || "Status error", raw: rawText });
 
     const inner    = data.data || data;
     const status   = inner.status   || data.status   || "pending";
@@ -708,19 +738,34 @@ app.get("/api/status/:taskId", async (req, res) => {
     const result   = inner.result   || data.result   || null;
     const videoUrl = (result && (result.video || result.url)) || inner.video_url || null;
 
-    // Auto-update history
-    const statusLower = status.toLowerCase();
+    const statusLower = (status || "").toLowerCase();
     if (statusLower === "success" || statusLower === "completed" || statusLower === "succeeded") {
       updateHistory(taskId, { status: "success", videoUrl });
     } else if (statusLower === "failed" || statusLower === "error") {
       updateHistory(taskId, { status: "failed" });
     }
 
-    res.json({ status, progress, result, video_url: videoUrl });
+    res.json({ status, progress, result, video_url: videoUrl, _raw: data });
 
   } catch (err) {
-    console.error("[/api/status]", err);
+    console.error("[/api/status] exception:", err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Debug — fire a minimal test request and return the raw Defapi response
+app.get("/api/debug", async (req, res) => {
+  const testPayload = { prompt: "a simple blue circle", images: [] };
+  try {
+    const r = await fetch("https://api.defapi.org/api/sora2/gen", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${DEFAPI_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify(testPayload),
+    });
+    const text = await r.text();
+    res.json({ http_status: r.status, raw_response: text, parsed: (() => { try { return JSON.parse(text); } catch(_){ return null; } })() });
+  } catch (err) {
+    res.json({ error: err.message });
   }
 });
 
